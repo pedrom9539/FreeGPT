@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="FreeGPT: chat direto entre dois participantes através de WebRTC. Sem base de dados e sem servidor próprio." />
+<title>FreeGPT · Chat WebRTC</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d14;
+    --bg-glow: #1d1846;
+    --surface: #141826;
+    --surface-2: #1c2237;
+    --surface-3: #242b45;
+    --border: #2d3758;
+    --text: #e9edf9;
+    --muted: #a7b0cc;
+    --accent: #7c5cff;
+    --accent-strong: #6746ff;
+    --accent-2: #2dd4bf;
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --err: #fb7185;
+    --radius: 18px;
+    --radius-sm: 12px;
+    --shadow: 0 14px 40px rgba(0, 0, 0, 0.38);
+    --focus: 0 0 0 3px rgba(45, 212, 191, 0.6);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; min-height: 100%; }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--text);
+    background:
+      radial-gradient(1100px 600px at 0% -10%, var(--bg-glow), transparent 60%),
+      radial-gradient(900px 500px at 110% 110%, #0d2a35, transparent 60%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+
+  .skip-link {
+    position: absolute; left: -9999px; top: 8px; z-index: 20;
+    background: var(--accent); color: #fff; padding: 8px 14px; border-radius: 8px;
+  }
+  .skip-link:focus { left: 12px; }
+
+  .app { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+
+  /* Cabeçalho */
+  .topbar {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+    gap: 12px 20px; padding: 14px 22px;
+    background: rgba(20, 24, 38, 0.82);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 1.35rem; letter-spacing: -0.02em; }
+  .logo {
+    width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-size: 1.1rem; box-shadow: 0 6px 20px rgba(124, 92, 255, 0.4);
+  }
+  .peers { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.9rem; color: var(--muted); }
+  .peer {
+    max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 4px 12px; border-radius: 999px; background: var(--surface-2);
+    border: 1px solid var(--border); color: var(--text);
+  }
+
+  .status {
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 6px 14px; border-radius: 999px; font-size: 0.92rem;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status[data-state="busy"] { border-color: rgba(251, 191, 36, 0.45); }
+  .status[data-state="busy"] .dot { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+  .status[data-state="ok"] { border-color: rgba(52, 211, 153, 0.5); }
+  .status[data-state="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.2); }
+  .status[data-state="warn"] { border-color: rgba(251, 191, 36, 0.5); }
+  .status[data-state="warn"] .dot { background: var(--warn); }
+  .status[data-state="error"] { border-color: rgba(251, 113, 133, 0.55); }
+  .status[data-state="error"] .dot { background: var(--err); }
+
+  /* Aviso */
+  .banner {
+    display: flex; align-items: flex-start; gap: 12px; justify-content: space-between;
+    margin: 16px 22px 0; padding: 12px 16px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--surface-2); font-size: 0.95rem;
+    animation: rise 0.2s ease-out;
+  }
+  .banner[data-kind="error"] { border-color: rgba(251, 113, 133, 0.6); background: rgba(251, 113, 133, 0.1); color: #ffe4e9; }
+  .banner[data-kind="ok"] { border-color: rgba(52, 211, 153, 0.55); background: rgba(52, 211, 153, 0.08); color: #d7fbea; }
+  .banner-close {
+    flex: none; background: transparent; border: 0; color: inherit; cursor: pointer;
+    font-size: 1.3rem; line-height: 1; padding: 0 4px; border-radius: 6px; min-width: 32px; min-height: 32px;
+  }
+
+  /* Layout */
+  .layout {
+    display: grid; grid-template-columns: minmax(300px, 390px) minmax(0, 1fr);
+    gap: 20px; padding: 20px 22px 26px; align-items: start; flex: 1;
+  }
+  .layout.solo { grid-template-columns: minmax(0, 900px); justify-content: center; }
+
+  .stack { display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: linear-gradient(180deg, rgba(31, 37, 60, 0.92), rgba(20, 24, 38, 0.95));
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow);
+  }
+  .card h1, .card h2 { margin: 0 0 8px; letter-spacing: -0.01em; }
+  .card h1 { font-size: 1.3rem; }
+  .card h2 { font-size: 1.05rem; display: flex; align-items: center; gap: 10px; }
+  .muted { color: var(--muted); margin: 0 0 12px; font-size: 0.93rem; }
+
+  .badge {
+    width: 28px; height: 28px; border-radius: 9px; display: inline-grid; place-items: center;
+    background: var(--surface-3); color: var(--accent-2); font-weight: 800; font-size: 0.9rem; flex: none;
+    border: 1px solid var(--border);
+  }
+
+  ol.steps { margin: 0 0 16px; padding-left: 0; list-style: none; display: grid; gap: 8px; }
+  ol.steps li {
+    display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start;
+    color: var(--muted); font-size: 0.93rem;
+  }
+  ol.steps strong { color: var(--text); }
+  ol.steps .num {
+    width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--surface-3); color: var(--text); font-size: 0.82rem; font-weight: 700;
+  }
+
+  details.more { margin-top: 14px; font-size: 0.9rem; color: var(--muted); }
+  details.more summary { cursor: pointer; color: var(--accent-2); font-weight: 600; padding: 4px 0; }
+  details.more ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+
+  label.field-label { display: block; font-weight: 600; font-size: 0.92rem; margin: 14px 0 6px; }
+
+  input[type="text"], textarea {
+    width: 100%; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 11px 13px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  input[type="text"] { min-height: 44px; }
+  textarea { resize: vertical; min-height: 84px; }
+  textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.8rem; word-break: break-all; }
+  textarea[readonly] { color: #cdd5ee; background: #0f1322; }
+  input:focus-visible, textarea:focus-visible { outline: none; border-color: var(--accent-2); box-shadow: var(--focus); }
+  input::placeholder, textarea::placeholder { color: #6f7898; }
+
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+
+  .hint { min-height: 1.3em; margin: 6px 0 0; font-size: 0.86rem; color: var(--muted); overflow-wrap: anywhere; }
+  .hint[data-kind="ok"] { color: var(--ok); }
+  .hint[data-kind="error"] { color: #fda4b4; }
+
+  .btn {
+    font: inherit; font-weight: 600; font-size: 0.95rem; cursor: pointer;
+    min-height: 44px; padding: 10px 16px; border-radius: 12px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+    transition: background 0.2s, border-color 0.2s, transform 0.08s, filter 0.2s;
+  }
+  .btn:hover:not(:disabled) { background: var(--surface-3); border-color: #465083; }
+  .btn:active:not(:disabled) { transform: translateY(1px); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), #4f7cff);
+    border-color: transparent; color: #fff;
+    box-shadow: 0 8px 22px rgba(103, 70, 255, 0.35);
+  }
+  .btn.primary:hover:not(:disabled) { background: linear-gradient(135deg, #8b6dff, #5b8bff); }
+  .btn.danger { color: #ffd7de; border-color: rgba(251, 113, 133, 0.5); background: rgba(251, 113, 133, 0.08); }
+  .btn.danger:hover:not(:disabled) { background: rgba(251, 113, 133, 0.18); }
+  .btn.small { min-height: 38px; padding: 7px 13px; font-size: 0.9rem; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+  .btn:focus-visible { outline: none; box-shadow: var(--focus); }
+
+  .restart { margin-top: 16px; }
+  .restart p { margin: 0 0 12px; color: var(--muted); font-size: 0.92rem; }
+
+  /* Painel de conversa */
+  .chat {
+    display: flex; flex-direction: column; padding: 0; overflow: hidden;
+    height: calc(100dvh - 190px); min-height: 520px;
+  }
+  .layout.solo .chat { height: min(calc(100dvh - 170px), 840px); }
+  .chat-head {
+    display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+    padding: 14px 18px; border-bottom: 1px solid var(--border);
+  }
+  .chat-head h2 { margin: 0; font-size: 1.05rem; }
+  .chat-head .sub { margin: 0; font-size: 0.85rem; color: var(--muted); }
+
+  .log {
+    flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding: 18px; display: flex; flex-direction: column; gap: 10px;
+    background:
+      radial-gradient(500px 300px at 90% 0%, rgba(124, 92, 255, 0.07), transparent 70%),
+      transparent;
+  }
+  .empty {
+    margin: auto; text-align: center; color: var(--muted); max-width: 400px; padding: 12px;
+  }
+  .empty strong { display: block; color: var(--text); font-size: 1.05rem; margin-bottom: 4px; }
+
+  .msg {
+    max-width: min(80%, 620px); padding: 10px 14px 11px; border-radius: 18px;
+    overflow-wrap: anywhere; animation: rise 0.18s ease-out;
+  }
+  .msg.in {
+    align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border);
+    border-bottom-left-radius: 6px;
+  }
+  .msg.out {
+    align-self: flex-end; color: #fff; background: linear-gradient(135deg, var(--accent-strong), #3f7cf6);
+    border-bottom-right-radius: 6px; box-shadow: 0 6px 18px rgba(63, 124, 246, 0.25);
+  }
+  .msg.history { opacity: 0.78; }
+  .msg .meta { display: flex; align-items: baseline; gap: 8px; font-size: 0.78rem; margin-bottom: 2px; }
+  .msg .who { font-weight: 700; }
+  .msg.in .who { color: var(--accent-2); }
+  .msg.out .meta { color: rgba(255, 255, 255, 0.85); }
+  .msg .meta time { color: inherit; opacity: 0.75; margin-left: auto; }
+  .msg .text { margin: 0; white-space: pre-wrap; font-size: 0.97rem; }
+
+  .sys {
+    align-self: center; text-align: center; max-width: 92%;
+    font-size: 0.84rem; color: var(--muted); padding: 5px 14px;
+    border: 1px dashed var(--border); border-radius: 999px; background: rgba(20, 24, 38, 0.6);
+    animation: rise 0.18s ease-out;
+  }
+
+  .composer {
+    display: flex; align-items: flex-end; gap: 10px; padding: 12px 14px;
+    border-top: 1px solid var(--border); background: rgba(20, 24, 38, 0.7);
+  }
+  .composer textarea {
+    flex: 1; min-height: 46px; max-height: 140px; resize: none; padding: 11px 14px;
+    border-radius: 16px; line-height: 1.4;
+  }
+  .composer .btn { min-width: 96px; height: 46px; }
+
+  .chat-foot {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px;
+    padding: 10px 14px 14px; font-size: 0.86rem; color: var(--muted);
+  }
+  .chat-foot label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .chat-foot input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent-2); }
+  .chat-foot .counter { font-variant-numeric: tabular-nums; }
+  .chat-foot .hist-note { flex-basis: 100%; margin: 0; font-size: 0.82rem; }
+  .btn.ghost { min-height: 36px; padding: 6px 12px; font-size: 0.86rem; background: transparent; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  @media (max-width: 860px) {
+    .layout, .layout.solo { grid-template-columns: minmax(0, 1fr); padding: 14px; gap: 14px; }
+    .layout.solo .chat, .chat { height: 72dvh; min-height: 460px; }
+    .msg { max-width: 90%; }
+    .topbar { padding: 12px 14px; }
+    .banner { margin: 12px 14px 0; }
+  }
+
+  @media (max-width: 420px) {
+    .brand { font-size: 1.2rem; }
+    .peer { max-width: 120px; }
+    .composer .btn { min-width: 76px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#chat">Ir para a conversa</a>
+
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">✦</span>
+      <span>FreeGPT</span>
+    </div>
+    <div class="peers" aria-label="Participantes">
+      <span class="peer" id="peerLocal" title="Tu">Eu</span>
+      <span aria-hidden="true">↔</span>
+      <span class="peer" id="peerRemote" title="Interlocutor">—</span>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite" data-state="idle">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="statusText">Sem ligação</span>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" role="status" aria-live="polite" data-kind="info" hidden>
+    <span id="bannerText"></span>
+    <button class="banner-close" id="bannerClose" type="button" aria-label="Fechar aviso">×</button>
+  </div>
+
+  <main class="layout" id="layout">
+    <section class="stack" id="setup" aria-label="Estabelecer ligação">
+
+      <div class="card">
+        <h1>Conversa direta, sem servidor</h1>
+        <p class="muted">O FreeGPT liga os dois navegadores diretamente (WebRTC). Os dados de ligação são trocados por ti, copiando e colando entre os dois participantes.</p>
+        <ol class="steps">
+          <li><span class="num">1</span><span><strong>A</strong> cria a ligação e envia a oferta a B.</span></li>
+          <li><span class="num">2</span><span><strong>B</strong> cola a oferta, responde e devolve a resposta a A.</span></li>
+          <li><span class="num">3</span><span><strong>A</strong> cola a resposta e confirma. Quando o canal abrir, podem conversar.</span></li>
+        </ol>
+        <label class="field-label" for="myName">O teu pseudónimo</label>
+        <input type="text" id="myName" maxlength="24" autocomplete="nickname" placeholder="Ex.: Ana" />
+        <details class="more">
+          <summary>Privacidade e limitações</summary>
+          <ul>
+            <li>As mensagens viajam diretamente entre os navegadores. Não passam por nenhum servidor do FreeGPT.</li>
+            <li>Para descobrir o teu endereço, é usado o servidor STUN público <code>stun.l.google.com</code>. Sem servidor TURN, a ligação pode falhar em redes com NAT ou firewall restritivas.</li>
+            <li>Os dados de ligação não são uma palavra-passe nem autenticam o outro participante. Partilha-os apenas com quem conheces.</li>
+            <li>Ofertas e respostas são válidas durante 30 minutos.</li>
+          </ul>
+        </details>
+      </div>
+
+      <div class="card" id="cardA">
+        <h2><span class="badge" aria-hidden="true">A</span> Criar ligação</h2>
+        <p class="muted">Usa este passo se és tu quem inicia a conversa.</p>
+        <button class="btn primary" id="btnCreate" type="button">Criar ligação</button>
+
+        <div id="offerBlock" hidden>
+          <label class="field-label" for="offerOut">Oferta para enviar a B</label>
+          <textarea class="code" id="offerOut" rows="4" readonly placeholder="A oferta aparece aqui"></textarea>
+          <div class="row">
+            <button class="btn small" id="btnCopyOffer" type="button">Copiar oferta</button>
+          </div>
+
+          <label class="field-label" for="answerIn">Resposta recebida de B</label>
+          <textarea class="code" id="answerIn" rows="4" maxlength="60000" placeholder="Cola aqui a resposta de B"></textarea>
+          <p class="hint" id="answerHint" aria-live="polite"></p>
+          <div class="row">
+            <button class="btn small" id="btnPasteAnswer" type="button">Colar</button>
+            <button class="btn small" id="btnClearAnswer" type="button">Limpar</button>
+            <button class="btn primary small" id="btnConfirm" type="button" disabled>Confirmar ligação</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="cardB">
+        <h2><span class="badge" aria-hidden="true">B</span> Responder a uma ligação</h2>
+        <p class="muted">Usa este passo se recebeste uma oferta de A.</p>
+
+        <label class="field-label" for="offerIn">Oferta recebida de A</label>
+        <textarea class="code" id="offerIn" rows="4" maxlength="60000" placeholder="Cola aqui a oferta de A"></textarea>
+        <p class="hint" id="offerHint" aria-live="polite"></p>
+        <div class="row">
+          <button class="btn small" id="btnPasteOffer" type="button">Colar</button>
+          <button class="btn small" id="btnClearOffer" type="button">Limpar</button>
+          <button class="btn primary small" id="btnAnswer" type="button">Responder à ligação</button>
+        </div>
+
+        <div id="answerBlock" hidden>
+          <label class="field-label" for="answerOut">Resposta para enviar a A</label>
+          <textarea class="code" id="answerOut" rows="4" readonly placeholder="A resposta aparece aqui"></textarea>
+          <div class="row">
+            <button class="btn small" id="btnCopyAnswer" type="button">Copiar resposta</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card restart">
+        <h2>Reiniciar</h2>
+        <p>Se a tentativa falhar ou ficar presa, limpa tudo e começa de novo.</p>
+        <button class="btn danger" id="btnRestart" type="button">Reiniciar ligação</button>
+      </div>
+    </section>
+
+    <section class="card chat" id="chat" aria-label="Conversa">
+      <div class="chat-head">
+        <div>
+          <h2>Conversa</h2>
+          <p class="sub" id="chatSub">Ainda sem ligação ativa</p>
+        </div>
+        <button class="btn danger small" id="btnEnd" type="button" disabled>Terminar ligação</button>
+      </div>
+
+      <div class="log" id="log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Mensagens">
+        <div class="empty" id="emptyState">
+          <strong>Ainda não há mensagens</strong>
+          Cria ou responde a uma ligação. Quando o canal estiver aberto, as mensagens aparecem aqui em tempo real.
+        </div>
+      </div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <label class="sr-only" for="msgInput">Mensagem</label>
+        <textarea id="msgInput" rows="1" maxlength="1000" disabled placeholder="Liga-te a um participante para escrever"></textarea>
+        <button class="btn primary" id="btnSend" type="submit" disabled>Enviar</button>
+      </form>
+
+      <div class="chat-foot">
+        <label>
+          <input type="checkbox" id="chkHistory" />
+          Guardar histórico neste navegador
+        </label>
+        <span class="counter" id="counter" aria-live="off">0/1000</span>
+        <button class="btn ghost" id="btnClearHistory" type="button">Limpar histórico local</button>
+        <p class="hist-note">O histórico fica apenas no <code>localStorage</code> deste navegador, não é sincronizado entre dispositivos e pode desaparecer se os dados do navegador forem apagados.</p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ------------------------------------------------------------------
+   * Configuração
+   * ------------------------------------------------------------------ */
+  const CONFIG = {
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+    channelLabel: 'freegpt-chat',
+    prefix: { offer: 'FG1O.', answer: 'FG1A.' },
+    protocolVersion: 1,
+    maxSignalChars: 60000,
+    maxSdpChars: 50000,
+    maxMessageChars: 1000,
+    maxFrameChars: 8000,
+    maxNameChars: 24,
+    iceTimeoutMs: 8000,
+    channelTimeoutMs: 45000,
+    answerWaitMs: 15 * 60 * 1000,
+    signalMaxAgeMinutes: 30,
+    historyMax: 200,
+    keys: {
+      name: 'freegpt.nome',
+      history: 'freegpt.historico.v1',
+      historyPref: 'freegpt.guardarHistorico'
+    }
+  };
+  CONFIG.signalMaxAgeMs = CONFIG.signalMaxAgeMinutes * 60 * 1000;
+
+  const ID_RE = /^[a-f0-9]{16,48}$/;
+
+  const $ = (id) => document.getElementById(id);
+
+  /* ------------------------------------------------------------------
+   * Suporte do navegador
+   * ------------------------------------------------------------------ */
+  const missingFeatures = [];
+  if (typeof window.RTCPeerConnection !== 'function' ||
+      !('createDataChannel' in window.RTCPeerConnection.prototype)) {
+    missingFeatures.push('WebRTC com canais de dados');
+  }
+  if (typeof window.TextEncoder !== 'function' || typeof window.TextDecoder !== 'function') {
+    missingFeatures.push('codificação de texto (TextEncoder/TextDecoder)');
+  }
+  if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+    missingFeatures.push('geração de valores aleatórios seguros (Web Crypto)');
+  }
+  if (typeof window.atob !== 'function' || typeof window.btoa !== 'function') {
+    missingFeatures.push('base64 (atob/btoa)');
+  }
+  const canConnect = missingFeatures.length === 0;
+
+  /* ------------------------------------------------------------------
+   * Estado
+   * session = { role, pc, dc, id, remoteName, offerReady, answered, connected, closing, timers }
+   * ------------------------------------------------------------------ */
+  let session = null;
+  let noticeTimer = null;
+
+  class SignalError extends Error {}
+
+  /* ------------------------------------------------------------------
+   * Utilitários
+   * ------------------------------------------------------------------ */
+  const storage = {
+    get(key) { try { return window.localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { window.localStorage.setItem(key, value); return true; } catch { return false; } },
+    remove(key) { try { window.localStorage.removeItem(key); } catch { /* ignorar */ } }
+  };
+
+  function randomId() {
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function sanitizeName(value) {
+    return String(value ?? '')
+      .replace(/[\u0000-\u001F\u007F]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, CONFIG.maxNameChars);
+  }
+
+  function localName() {
+    return sanitizeName($('myName').value) || 'Eu';
+  }
+
+  function requireName() {
+    const name = sanitizeName($('myName').value);
+    if (!name) {
+      showNotice('Introduz um pseudónimo antes de continuar.', 'error');
+      $('myName').focus();
+      return null;
+    }
+    return name;
+  }
+
+  function describeError(err) {
+    if (err && err.name === 'NotSupportedError') return 'este navegador não suporta esta operação WebRTC.';
+    if (err && err.message) return err.message;
+    return 'erro desconhecido.';
+  }
+
+  function fmtTime(ts) {
+    return new Date(ts).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /* ------------------------------------------------------------------
+   * Codificação e validação dos dados de sinalização
+   * Formato: PREFIXO + base64url(JSON UTF-8). O JSON contém versão, tipo,
+   * identificador, referência (na resposta), nome, data e SDP.
+   * ------------------------------------------------------------------ */
+  function encodeSignal(type, sdp, id, ref, name) {
+    const payload = { v: CONFIG.protocolVersion, t: type, id, n: name, ts: Date.now(), sdp };
+    if (ref) payload.ref = ref;
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    let binary = '';
+    for (const b of bytes) binary += String.fromCharCode(b);
+    const b64url = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return CONFIG.prefix[type] + b64url;
+  }
+
+  function decodePayload(b64url) {
+    let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const binary = atob(b64);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  }
+
+  function parseSignal(raw, expected) {
+    const other = expected === 'offer' ? 'answer' : 'offer';
+    const text = String(raw ?? '').replace(/\s+/g, '');
+    const invalid = () => new SignalError('Os dados são inválidos. Confirma que copiaste o bloco completo.');
+
+    if (!text) {
+      throw new SignalError(expected === 'offer'
+        ? 'Cola a oferta recebida de A.'
+        : 'Cola a resposta recebida de B.');
+    }
+    if (text.length > CONFIG.maxSignalChars) {
+      throw new SignalError('Os dados são demasiado grandes. Confirma que copiaste apenas o bloco de ligação.');
+    }
+    if (text.startsWith(CONFIG.prefix[other])) {
+      throw new SignalError(expected === 'offer'
+        ? 'Estes dados são uma resposta, não uma oferta. Usa-os no passo de B «Responder a uma ligação» apenas se forem a oferta de A.'
+        : 'Estes dados são uma oferta, não uma resposta. Cola a resposta que B gerou.');
+    }
+    if (!text.startsWith(CONFIG.prefix[expected])) {
+      throw new SignalError(`Formato inválido. Os dados devem começar por ${CONFIG.prefix[expected]}. Copia o bloco inteiro.`);
+    }
+
+    let payload;
+    try {
+      payload = decodePayload(text.slice(CONFIG.prefix[expected].length));
+    } catch {
+      throw new SignalError('Os dados estão incompletos ou corrompidos. Copia novamente o bloco inteiro.');
+    }
+
+    if (!payload || typeof payload !== 'object' || payload.v !== CONFIG.protocolVersion || payload.t !== expected) {
+      throw invalid();
+    }
+    if (typeof payload.id !== 'string' || !ID_RE.test(payload.id)) throw invalid();
+    if (expected === 'answer' && (typeof payload.ref !== 'string' || !ID_RE.test(payload.ref))) throw invalid();
+
+    const name = sanitizeName(payload.n);
+    if (!name) throw new SignalError('Os dados não indicam o nome do participante.');
+
+    if (typeof payload.ts !== 'number' || !Number.isFinite(payload.ts)) throw invalid();
+    if (Date.now() - payload.ts > CONFIG.signalMaxAgeMs) {
+      throw new SignalError(`Estes dados expiraram (têm mais de ${CONFIG.signalMaxAgeMinutes} minutos). Pede a A para criar uma nova ligação.`);
+    }
+
+    if (typeof payload.sdp !== 'string' || payload.sdp.length > CONFIG.maxSdpChars ||
+        !payload.sdp.startsWith('v=0') || !payload.sdp.includes('m=application')) {
+      throw new SignalError('O conteúdo WebRTC está incompleto ou é inválido.');
+    }
+
+    return {
+      id: payload.id,
+      ref: payload.ref || null,
+      name,
+      sdp: payload.sdp
+    };
+  }
+
+  function setHint(hintEl, kind, text) {
+    hintEl.dataset.kind = kind || '';
+    hintEl.textContent = text || '';
+  }
+
+  function checkField(inputId, hintId, expected) {
+    const value = $(inputId).value;
+    const hint = $(hintId);
+    if (!value.trim()) {
+      setHint(hint, '', '');
+      return null;
+    }
+    try {
+      const parsed = parseSignal(value, expected);
+      setHint(hint, 'ok', expected === 'offer'
+        ? `Oferta válida de ${parsed.name}.`
+        : `Resposta válida de ${parsed.name}.`);
+      return parsed;
+    } catch (err) {
+      setHint(hint, 'error', err.message);
+      return null;
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Interface: estado, avisos, mensagens
+   * ------------------------------------------------------------------ */
+  function setStatus(kind, text) {
+    $('status').dataset.state = kind;
+    $('statusText').textContent = text;
+  }
+
+  function showNotice(text, kind = 'info', options = {}) {
+    const banner = $('banner');
+    $('bannerText').textContent = text;
+    banner.dataset.kind = kind;
+    banner.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    banner.hidden = false;
+    clearTimeout(noticeTimer);
+    if (options.autoHideMs) {
+      noticeTimer = setTimeout(() => { banner.hidden = true; }, options.autoHideMs);
+    }
+  }
+
+  function scrollLog(force) {
+    const log = $('log');
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 120;
+    if (force || nearBottom) log.scrollTop = log.scrollHeight;
+  }
+
+  function updateEmptyState() {
+    $('emptyState').hidden = !!$('log').querySelector('.msg, .sys');
+  }
+
+  function addSystem(text) {
+    const node = document.createElement('div');
+    node.className = 'sys';
+    node.textContent = text;
+    $('log').appendChild(node);
+    updateEmptyState();
+    scrollLog(true);
+  }
+
+  function renderMessage(entry) {
+    const isOut = entry.dir === 'out';
+    const node = document.createElement('article');
+    node.className = 'msg ' + (isOut ? 'out' : 'in') + (entry.history ? ' history' : '');
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+
+    const who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = entry.name || (isOut ? 'Eu' : 'Outro participante');
+
+    const time = document.createElement('time');
+    time.dateTime = new Date(entry.ts).toISOString();
+    time.textContent = fmtTime(entry.ts);
+
+    meta.append(who, time);
+
+    const body = document.createElement('p');
+    body.className = 'text';
+    body.textContent = entry.text;
+
+    node.append(meta, body);
+    $('log').appendChild(node);
+    updateEmptyState();
+    scrollLog(isOut);
+  }
+
+  function addMessage(entry) {
+    renderMessage(entry);
+    if (!entry.history && historyEnabled()) saveHistoryEntry(entry);
+  }
+
+  /* ------------------------------------------------------------------
+   * Histórico local (localStorage, opcional)
+   * ------------------------------------------------------------------ */
+  function historyEnabled() {
+    return $('chkHistory').checked;
+  }
+
+  function loadHistory() {
+    const raw = storage.get(CONFIG.keys.history);
+    if (!raw) return [];
+    try {
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) return [];
+      return list
+        .filter((e) => e && (e.dir === 'in' || e.dir === 'out') && typeof e.text === 'string' && typeof e.ts === 'number')
+        .map((e) => ({ dir: e.dir, name: sanitizeName(e.name), text: e.text.slice(0, CONFIG.maxMessageChars), ts: e.ts }))
+        .slice(-CONFIG.historyMax);
+    } catch {
+      return [];
+    }
+  }
+
+  function saveHistoryEntry(entry) {
+    const list = loadHistory();
+    list.push({ dir: entry.dir, name: entry.name, text: entry.text, ts: entry.ts });
+    const ok = storage.set(CONFIG.keys.history, JSON.stringify(list.slice(-CONFIG.historyMax)));
+    if (!ok) showNotice('Não foi possível guardar o histórico (armazenamento cheio ou bloqueado).', 'error');
+  }
+
+  function restoreHistory() {
+    const list = loadHistory();
+    if (!list.length) return;
+    const separator = document.createElement('div');
+    separator.className = 'sys';
+    separator.textContent = 'Histórico guardado neste navegador (não sincronizado com o outro dispositivo)';
+    $('log').appendChild(separator);
+    list.forEach((entry) => renderMessage({ ...entry, history: true }));
+    updateEmptyState();
+  }
+
+  function clearHistory() {
+    if (!window.confirm('Apagar o histórico guardado neste navegador e limpar a conversa visível?')) return;
+    storage.remove(CONFIG.keys.history);
+    const log = $('log');
+    log.querySelectorAll('.msg, .sys').forEach((node) => node.remove());
+    updateEmptyState();
+    showNotice('Histórico local apagado.', 'ok', { autoHideMs: 4000 });
+  }
+
+  /* ------------------------------------------------------------------
+   * Copiar e colar
+   * ------------------------------------------------------------------ */
+  async function copyFrom(field, okText) {
+    const text = field.value;
+    if (!text) {
+      showNotice('Não há nada para copiar.', 'error');
+      return;
+    }
+    try {
+      if (!navigator.clipboard || !window.isSecureContext) throw new Error('clipboard indisponível');
+      await navigator.clipboard.writeText(text);
+      showNotice(okText, 'ok', { autoHideMs: 4000 });
+    } catch {
+      field.focus();
+      field.select();
+      let copied = false;
+      try { copied = document.execCommand('copy'); } catch { copied = false; }
+      if (copied) {
+        showNotice(okText, 'ok', { autoHideMs: 4000 });
+      } else {
+        showNotice('Não foi possível copiar automaticamente. O texto foi selecionado: usa Ctrl+C (⌘C).', 'info');
+      }
+    }
+  }
+
+  async function pasteInto(field, validate) {
+    try {
+      if (!navigator.clipboard || typeof navigator.clipboard.readText !== 'function') {
+        throw new Error('leitura indisponível');
+      }
+      field.value = await navigator.clipboard.readText();
+      validate();
+      showNotice('Dados colados. Verifica a mensagem de validação antes de continuar.', 'ok', { autoHideMs: 4000 });
+    } catch {
+      field.focus();
+      showNotice('O navegador não permitiu colar automaticamente. Clica no campo e usa Ctrl+V (⌘V).', 'info');
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Sessão WebRTC
+   * ------------------------------------------------------------------ */
+  function newSession(role, pc) {
+    return {
+      role,
+      pc,
+      dc: null,
+      id: randomId(),
+      remoteName: '',
+      offerReady: false,
+      answered: false,
+      connected: false,
+      closing: false,
+      timers: []
+    };
+  }
+
+  function isCurrent(sess) {
+    return session === sess && !sess.closing;
+  }
+
+  function addTimer(sess, fn, ms) {
+    sess.timers.push(setTimeout(fn, ms));
+  }
+
+  function clearTimers(sess) {
+    sess.timers.forEach(clearTimeout);
+    sess.timers = [];
+  }
+
+  function closeSession(sess) {
+    if (!sess || sess.closing) return;
+    sess.closing = true;
+    clearTimers(sess);
+    const { dc, pc } = sess;
+    if (dc) {
+      dc.onopen = null;
+      dc.onmessage = null;
+      dc.onclose = null;
+      dc.onerror = null;
+      try { dc.close(); } catch { /* já fechado */ }
+    }
+    if (pc) {
+      pc.onconnectionstatechange = null;
+      pc.ondatachannel = null;
+      try { pc.close(); } catch { /* já fechado */ }
+    }
+  }
+
+  function createPeer() {
+    const pc = new RTCPeerConnection({ iceServers: CONFIG.iceServers });
+    pc.onconnectionstatechange = () => onConnectionState(pc);
+    return pc;
+  }
+
+  function waitForIce(pc) {
+    return new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve(true);
+        return;
+      }
+      let finished = false;
+      const finish = (complete) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        pc.removeEventListener('icegatheringstatechange', onChange);
+        resolve(complete);
+      };
+      const onChange = () => {
+        if (pc.iceGatheringState === 'complete') finish(true);
+      };
+      const timer = setTimeout(() => finish(false), CONFIG.iceTimeoutMs);
+      pc.addEventListener('icegatheringstatechange', onChange);
+    });
+  }
+
+  function attachChannel(sess, dc) {
+    sess.dc = dc;
+    dc.onopen = () => {
+      if (!isCurrent(sess) || sess.connected) return;
+      sess.connected = true;
+      clearTimers(sess);
+      setStatus('ok', `Ligado a ${sess.remoteName}`);
+      $('chatSub').textContent = `Canal aberto com ${sess.remoteName}`;
+      $('peerRemote').textContent = sess.remoteName;
+      $('peerRemote').title = sess.remoteName;
+      addSystem(`Canal aberto. Já estão ligados a ${sess.remoteName}.`);
+      showNotice('Ligação estabelecida. Já podem conversar.', 'ok', { autoHideMs: 4000 });
+      refreshUi();
+      $('msgInput').focus();
+    };
+    dc.onmessage = (event) => {
+      if (isCurrent(sess)) onRemoteData(sess, event.data);
+    };
+    dc.onclose = () => {
+      if (isCurrent(sess)) onChannelLost(sess);
+    };
+    dc.onerror = (event) => {
+      console.warn('FreeGPT: erro no canal de dados', event && event.error);
+    };
+    if (dc.readyState === 'open') dc.onopen();
+  }
+
+  function onConnectionState(pc) {
+    const sess = session;
+    if (!sess || sess.pc !== pc || sess.closing) return;
+    const state = pc.connectionState;
+    if (state === 'failed') {
+      failSession(sess, 'Não foi possível estabelecer a ligação direta. Pode dever-se a NAT, firewall ou rede restrita (não há servidor TURN). Tenta outra rede.');
+    } else if (state === 'disconnected' && sess.connected) {
+      setStatus('warn', 'Ligação instável. A tentar recuperar…');
+    } else if (state === 'connected' && sess.connected) {
+      setStatus('ok', `Ligado a ${sess.remoteName}`);
+    }
+  }
+
+  function startChannelTimer(sess, ms, message) {
+    addTimer(sess, () => {
+      failSession(sess, message);
+    }, ms);
+  }
+
+  function onChannelLost(sess) {
+    if (!isCurrent(sess)) return;
+    const wasConnected = sess.connected;
+    const who = sess.remoteName || 'o outro participante';
+    teardown({ message: wasConnected ? 'Ligação interrompida' : 'Canal fechado antes de abrir', kind: 'error' });
+    if (wasConnected) addSystem(`A ligação com ${who} foi interrompida.`);
+    showNotice(wasConnected
+      ? 'A ligação foi interrompida. Podes criar ou responder a uma nova ligação.'
+      : 'O canal fechou antes de abrir. Tenta novamente com dados novos.', 'error');
+  }
+
+  function failSession(sess, message) {
+    if (!isCurrent(sess)) return;
+    teardown({ message: 'Erro na ligação', kind: 'error' });
+    showNotice(message, 'error');
+  }
+
+  /* Fecha a sessão atual. notify=true envia «bye» ao outro participante antes de fechar. */
+  function teardown({ notify = false, message = 'Sem ligação', kind = 'idle' } = {}) {
+    const sess = session;
+    session = null;
+    if (sess) {
+      if (notify && sess.dc && sess.dc.readyState === 'open') {
+        try { sess.dc.send(JSON.stringify({ t: 'bye' })); } catch { /* ignorar */ }
+        sess.dc.onclose = null;
+        setTimeout(() => closeSession(sess), 300);
+      } else {
+        closeSession(sess);
+      }
+    }
+    clearOutputs();
+    $('chatSub').textContent = 'Ainda sem ligação ativa';
+    $('peerRemote').textContent = '—';
+    $('peerRemote').title = 'Interlocutor';
+    setStatus(kind, message);
+    refreshUi();
+  }
+
+  function clearOutputs() {
+    $('offerOut').value = '';
+    $('answerOut').value = '';
+    $('offerBlock').hidden = true;
+    $('answerBlock').hidden = true;
+  }
+
+  function clearInputs() {
+    $('offerIn').value = '';
+    $('answerIn').value = '';
+    setHint($('offerHint'), '', '');
+    setHint($('answerHint'), '', '');
+  }
+
+  function refreshUi() {
+    const connected = !!(session && session.connected && session.dc && session.dc.readyState === 'open');
+    const busy = !!session;
+    $('setup').hidden = connected;
+    $('layout').classList.toggle('solo', connected);
+    $('btnCreate').disabled = busy || !canConnect;
+    $('btnAnswer').disabled = busy || !canConnect;
+    $('btnConfirm').disabled = !(session && session.role === 'offerer' && session.offerReady && !session.answered);
+    $('btnEnd').disabled = !busy;
+    $('msgInput').disabled = !connected;
+    $('btnSend').disabled = !connected;
+    $('msgInput').placeholder = connected
+      ? 'Escreve uma mensagem… (Enter envia, Shift+Enter quebra linha)'
+      : 'Liga-te a um participante para escrever';
+    $('peerLocal').textContent = localName();
+    $('peerLocal').title = localName();
+  }
+
+  /* ------------------------------------------------------------------
+   * Fluxo A: criar oferta
+   * ------------------------------------------------------------------ */
+  async function createConnection() {
+    if (!canConnect) return;
+    const name = requireName();
+    if (!name) return;
+
+    teardown();
+    $('answerIn').value = '';
+    setHint($('answerHint'), '', '');
+
+    const pc = createPeer();
+    const sess = newSession('offerer', pc);
+    session = sess;
+    attachChannel(sess, pc.createDataChannel(CONFIG.channelLabel, { ordered: true }));
+
+    setStatus('busy', 'A recolher dados de rede…');
+    refreshUi();
+
+    try {
+      await pc.setLocalDescription(await pc.createOffer());
+      await waitForIce(pc);
+      if (!isCurrent(sess)) return;
+
+      $('offerOut').value = encodeSignal('offer', pc.localDescription.sdp, sess.id, null, name);
+      $('offerBlock').hidden = false;
+      sess.offerReady = true;
+      setStatus('busy', 'Oferta pronta. Envia-a a B e aguarda a resposta.');
+      showNotice('Oferta criada. Copia-a e envia-a ao participante B.', 'ok', { autoHideMs: 6000 });
+      refreshUi();
+    } catch (err) {
+      failSession(sess, 'Não foi possível criar a oferta: ' + describeError(err));
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Fluxo A: confirmar resposta de B
+   * ------------------------------------------------------------------ */
+  async function confirmAnswer() {
+    const sess = session;
+    if (!sess || sess.role !== 'offerer' || !sess.offerReady || sess.answered) return;
+
+    let answer;
+    try {
+      answer = parseSignal($('answerIn').value, 'answer');
+    } catch (err) {
+      showNotice(err.message, 'error');
+      setHint($('answerHint'), 'error', err.message);
+      $('answerIn').focus();
+      return;
+    }
+
+    if (answer.ref !== sess.id) {
+      const msg = 'Esta resposta não corresponde à oferta atual. Se reiniciaste ou criaste outra oferta, pede a B uma resposta nova a partir da oferta atual.';
+      showNotice(msg, 'error');
+      setHint($('answerHint'), 'error', msg);
+      return;
+    }
+
+    sess.answered = true;
+    sess.remoteName = answer.name;
+    refreshUi();
+    setStatus('busy', `A estabelecer ligação com ${answer.name}…`);
+    showNotice('Resposta recebida. A aguardar que o canal de comunicação abra…', 'info');
+
+    try {
+      await sess.pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
+      if (!isCurrent(sess)) return;
+      startChannelTimer(sess, CONFIG.channelTimeoutMs,
+        'O canal não abriu a tempo (45 s). Confirma que colaste a resposta correta. Redes com NAT ou firewall restritivas podem impedir a ligação.');
+    } catch (err) {
+      failSession(sess, 'A resposta não pôde ser aplicada: ' + describeError(err));
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Fluxo B: responder à oferta
+   * ------------------------------------------------------------------ */
+  async function answerConnection() {
+    if (!canConnect) return;
+    const name = requireName();
+    if (!name) return;
+
+    let offer;
+    try {
+      offer = parseSignal($('offerIn').value, 'offer');
+    } catch (err) {
+      setHint($('offerHint'), 'error', err.message);
+      showNotice(err.message, 'error');
+      $('offerIn').focus();
+      return;
+    }
+
+    teardown();
+
+    const pc = createPeer();
+    const sess = newSession('answerer', pc);
+    sess.remoteName = offer.name;
+    session = sess;
+
+    pc.ondatachannel = (event) => {
+      if (!isCurrent(sess) || sess.dc) {
+        try { event.channel.close(); } catch { /* ignorar */ }
+        return;
+      }
+      attachChannel(sess, event.channel);
+    };
+
+    setStatus('busy', `A gerar resposta para ${offer.name}…`);
+    refreshUi();
+
+    try {
+      await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
+      await pc.setLocalDescription(await pc.createAnswer());
+      await waitForIce(pc);
+      if (!isCurrent(sess)) return;
+
+      $('answerOut').value = encodeSignal('answer', pc.localDescription.sdp, sess.id, offer.id, name);
+      $('answerBlock').hidden = false;
+      setStatus('busy', 'Resposta pronta. Envia-a a A e aguarda a confirmação.');
+      showNotice('Resposta criada. Copia-a e envia-a ao participante A.', 'ok', { autoHideMs: 6000 });
+      startChannelTimer(sess, CONFIG.answerWaitMs,
+        'A não confirmou a ligação a tempo (15 minutos). Pede uma nova oferta.');
+      refreshUi();
+    } catch (err) {
+      failSession(sess, 'Não foi possível responder à ligação: ' + describeError(err));
+    }
+  }
+
+  /* ------------------------------------------------------------------
+   * Mensagens
+   * ------------------------------------------------------------------ */
+  function cleanMessage(raw) {
+    return String(raw ?? '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .trim();
+  }
+
+  function sendChat(raw) {
+    const sess = session;
+    const text = cleanMessage(raw);
+    if (!text) {
+      showNotice('Escreve uma mensagem antes de enviar.', 'error');
+      return;
+    }
+    if (text.length > CONFIG.maxMessageChars) {
+      showNotice(`A mensagem excede o limite de ${CONFIG.maxMessageChars} caracteres.`, 'error');
+      return;
+    }
+    const dc = sess && sess.dc;
+    if (!sess || !sess.connected || !dc || dc.readyState !== 'open') {
+      showNotice('A ligação ainda não está aberta. Aguarda a confirmação do canal antes de enviar mensagens.', 'error');
+      return;
+    }
+    try {
+      dc.send(JSON.stringify({ t: 'msg', text }));
+    } catch (err) {
+      showNotice('Não foi possível enviar a mensagem: ' + describeError(err), 'error');
+      return;
+    }
+    addMessage({ dir: 'out', name: localName(), text, ts: Date.now() });
+    $('msgInput').value = '';
+    autoGrow();
+    updateCounter();
+    $('msgInput').focus();
+  }
+
+  function onRemoteData(sess, data) {
+    if (typeof data !== 'string' || data.length > CONFIG.maxFrameChars) return;
+    let frame;
+    try { frame = JSON.parse(data); } catch { return; }
+    if (!frame || typeof frame !== 'object') return;
+
+    if (frame.t === 'msg' && typeof frame.text === 'string') {
+      const text = cleanMessage(frame.text);
+      if (!text || text.length > CONFIG.maxMessageChars) return;
+      addMessage({ dir: 'in', name: sess.remoteName, text, ts: Date.now() });
+    } else if (frame.t === 'bye') {
+      const who = sess.remoteName || 'O outro participante';
+      teardown({ message: 'O outro participante terminou a ligação', kind: 'warn' });
+      addSystem(`${who} terminou a ligação.`);
+      showNotice(`${who} terminou a ligação. Podes criar ou responder a outra ligação.`, 'info', { autoHideMs: 8000 });
+    }
+  }
+
+  function autoGrow() {
+    const field = $('msgInput');
+    field.style.height = 'auto';
+    field.style.height = Math.min(field.scrollHeight, 140) + 'px';
+  }
+
+  function updateCounter() {
+    $('counter').textContent = `${$('msgInput').value.length}/${CONFIG.maxMessageChars}`;
+  }
+
+  /* ------------------------------------------------------------------
+   * Ligação de eventos
+   * ------------------------------------------------------------------ */
+  function bind() {
+    $('bannerClose').addEventListener('click', () => { $('banner').hidden = true; });
+
+    $('myName').value = storage.get(CONFIG.keys.name) || '';
+    $('myName').addEventListener('input', () => {
+      const name = sanitizeName($('myName').value);
+      if (name) storage.set(CONFIG.keys.name, name);
+      $('peerLocal').textContent = localName();
+    });
+
+    $('btnCreate').addEventListener('click', createConnection);
+    $('btnAnswer').addEventListener('click', answerConnection);
+    $('btnConfirm').addEventListener('click', confirmAnswer);
+
+    $('btnCopyOffer').addEventListener('click', () => copyFrom($('offerOut'), 'Oferta copiada.'));
+    $('btnCopyAnswer').addEventListener('click', () => copyFrom($('answerOut'), 'Resposta copiada.'));
+
+    $('btnPasteOffer').addEventListener('click', () => pasteInto($('offerIn'), () => checkField('offerIn', 'offerHint', 'offer')));
+    $('btnPasteAnswer').addEventListener('click', () => pasteInto($('answerIn'), () => checkField('answerIn', 'answerHint', 'answer')));
+
+    $('btnClearOffer').addEventListener('click', () => {
+      $('offerIn').value = '';
+      setHint($('offerHint'), '', '');
+      $('offerIn').focus();
+    });
+    $('btnClearAnswer').addEventListener('click', () => {
+      $('answerIn').value = '';
+      setHint($('answerHint'), '', '');
+      $('answerIn').focus();
+    });
+
+    $('offerIn').addEventListener('input', () => checkField('offerIn', 'offerHint', 'offer'));
+    $('answerIn').addEventListener('input', () => checkField('answerIn', 'answerHint', 'answer'));
+
+    $('btnRestart').addEventListener('click', () => {
+      teardown({ notify: true, message: 'Sem ligação', kind: 'idle' });
+      clearInputs();
+      showNotice('Ligação reiniciada. Podes começar de novo.', 'ok', { autoHideMs: 4000 });
+    });
+
+    $('btnEnd').addEventListener('click', () => {
+      const wasConnected = !!(session && session.connected);
+      teardown({ notify: true, message: 'Ligação terminada por ti', kind: 'idle' });
+      clearInputs();
+      if (wasConnected) addSystem('Ligação terminada por ti.');
+      showNotice('Ligação terminada. Podes criar ou responder a outra ligação.', 'info', { autoHideMs: 6000 });
+    });
+
+    $('composer').addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendChat($('msgInput').value);
+    });
+
+    $('msgInput').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        $('composer').requestSubmit();
+      }
+    });
+    $('msgInput').addEventListener('input', () => {
+      autoGrow();
+      updateCounter();
+    });
+
+    $('chkHistory').checked = storage.get(CONFIG.keys.historyPref) === '1';
+    $('chkHistory').addEventListener('change', () => {
+      storage.set(CONFIG.keys.historyPref, $('chkHistory').checked ? '1' : '0');
+      showNotice($('chkHistory').checked
+        ? 'O histórico passa a ser guardado neste navegador.'
+        : 'O histórico deixa de ser guardado. O que já estava guardado mantém-se até o limpares.', 'info', { autoHideMs: 5000 });
+    });
+
+    $('btnClearHistory').addEventListener('click', clearHistory);
+
+    window.addEventListener('pagehide', () => {
+      if (session) closeSession(session);
+    });
+  }
+
+  function init() {
+    bind();
+    restoreHistory();
+    setStatus('idle', 'Sem ligação');
+    if (!canConnect) {
+      showNotice(`Este navegador não suporta: ${missingFeatures.join('; ')}. Usa uma versão recente do Chrome, Edge, Firefox ou Safari.`, 'error');
+    }
+    updateCounter();
+    refreshUi();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
