@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="description" content="Ponte de conversa local, sem APIs externas." />
+<title>Ponte · Chat</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #262624;
+    --surface: #30302e;
+    --surface-2: #3a3a37;
+    --border: #44443f;
+    --text: #ececec;
+    --muted: #9b9a94;
+    --accent: #d97757;
+    --accent-hover: #e38a6d;
+    --ok: #7fd1a6;
+    --err: #f28b82;
+    --focus: 0 0 0 3px rgba(217, 119, 87, 0.45);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.6; color: var(--text); background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app { height: 100dvh; display: flex; flex-direction: column; }
+
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 18px; border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; }
+  .logo {
+    width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+    background: var(--accent); color: #fff; font-size: 0.95rem;
+  }
+  .status { display: inline-flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .status[data-state="ok"] .dot { background: var(--ok); }
+  .status[data-state="error"] .dot { background: var(--err); }
+
+  .notice {
+    max-width: 780px; width: calc(100% - 40px); margin: 12px auto 0; padding: 10px 14px;
+    border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 0.9rem;
+  }
+  .notice[data-kind="error"] { border-color: rgba(242, 139, 130, 0.6); color: #ffd6d2; }
+
+  .chat { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .thread { max-width: 780px; margin: 0 auto; padding: 28px 20px 12px; display: flex; flex-direction: column; gap: 22px; }
+  .welcome { margin: auto; text-align: center; color: var(--muted); padding: 60px 12px; }
+  .welcome h1 { font-size: 1.6rem; font-weight: 500; color: var(--text); margin: 0 0 8px; }
+
+  .msg { display: flex; flex-direction: column; animation: rise 0.18s ease-out; }
+  .msg.user { align-items: flex-end; }
+  .msg.user .bubble {
+    max-width: 85%; background: var(--surface-2); padding: 10px 16px; border-radius: 18px;
+    border-bottom-right-radius: 6px;
+  }
+  .msg.assistant .bubble { width: 100%; }
+  .msg .who { font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; }
+  .bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+  .composer-wrap { padding: 8px 20px 18px; }
+  .composer {
+    max-width: 780px; margin: 0 auto; display: flex; align-items: flex-end; gap: 8px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 22px;
+    padding: 10px 10px 10px 16px; transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .composer:focus-within { border-color: #5a5a54; box-shadow: var(--focus); }
+  .composer textarea {
+    flex: 1; min-height: 28px; max-height: 200px; resize: none; border: 0; outline: none;
+    background: transparent; color: var(--text); font: inherit; font-size: 1rem; line-height: 1.5; padding: 4px 0;
+  }
+  .composer textarea::placeholder { color: #7d7c76; }
+  .send {
+    flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
+    display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 1.1rem;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .send:hover:not(:disabled) { background: var(--accent-hover); }
+  .send:focus-visible { outline: none; box-shadow: var(--focus); }
+  .send:disabled { opacity: 0.35; cursor: not-allowed; }
+  .foot-note { text-align: center; font-size: 0.78rem; color: #7d7c76; margin: 8px 0 0; }
+
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  @media (max-width: 600px) {
+    .thread { padding: 18px 14px 8px; }
+    .composer-wrap { padding: 6px 12px 14px; }
+    .msg.user .bubble { max-width: 92%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">✦</span>
+      <span>Ponte</span>
+    </div>
+    <div class="status" id="status" data-state="idle" role="status" aria-live="polite">
+      <span class="dot" aria-hidden="true"></span>
+      <span id="statusText">A ligar…</span>
+    </div>
+  </header>
+
+  <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
+
+  <main class="chat" id="chat" aria-label="Conversa">
+    <div class="thread" id="thread" role="log" aria-live="polite" aria-relevant="additions">
+      <div class="welcome" id="welcome">
+        <h1>Ponte local</h1>
+        <p>As mensagens que escreveres aqui ficam guardadas no servidor local. As respostas aparecem nesta página assim que forem escritas.</p>
+      </div>
+    </div>
+  </main>
+
+  <div class="composer-wrap">
+    <form class="composer" id="composer" autocomplete="off">
+      <label class="sr-only" for="input">Mensagem</label>
+      <textarea id="input" rows="1" maxlength="8000" placeholder="Escreve uma mensagem… (Enter envia, Shift+Enter quebra linha)"></textarea>
+      <button class="send" id="btnSend" type="submit" aria-label="Enviar">↑</button>
+    </form>
+    <p class="foot-note">Conversa local, sem APIs externas. Servidor em 127.0.0.1.</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const CONFIG = {
+    pollMs: 1000,
+    retryMs: 3000,
+    maxInputChars: 8000
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const state = { lastId: 0, sending: false, polling: false, seen: new Set() };
+
+  function setStatus(kind, text) {
+    $('status').dataset.state = kind;
+    $('statusText').textContent = text;
+  }
+
+  let noticeTimer = null;
+  function showNotice(text, kind = 'info') {
+    const box = $('notice');
+    box.textContent = text;
+    box.dataset.kind = kind;
+    box.hidden = false;
+    clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(() => { box.hidden = true; }, 5000);
+  }
+
+  function scrollToBottom(force = false) {
+    const chat = $('chat');
+    const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 160;
+    if (force || nearBottom) chat.scrollTop = chat.scrollHeight;
+  }
+
+  function renderMessage(msg) {
+    if (state.seen.has(msg.id)) return;
+    state.seen.add(msg.id);
+    $('welcome').hidden = true;
+
+    const article = document.createElement('article');
+    article.className = `msg ${msg.role === 'assistant' ? 'assistant' : 'user'}`;
+
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = msg.role === 'assistant' ? 'Assistente' : 'Tu';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const p = document.createElement('p');
+    p.textContent = msg.text; // sempre textContent
+    bubble.appendChild(p);
+
+    article.append(who, bubble);
+    $('thread').appendChild(article);
+    scrollToBottom(msg.role !== 'assistant');
+  }
+
+  async function poll() {
+    if (state.polling) return;
+    state.polling = true;
+    try {
+      const res = await fetch(`/api/messages?after=${state.lastId}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const data = await res.json();
+      data.messages.forEach(renderMessage);
+      if (data.messages.length) state.lastId = data.messages[data.messages.length - 1].id;
+      setStatus('ok', 'Ligado');
+      schedule(CONFIG.pollMs);
+    } catch {
+      setStatus('error', 'Sem ligação ao servidor');
+      schedule(CONFIG.retryMs);
+    } finally {
+      state.polling = false;
+    }
+  }
+
+  function schedule(ms) {
+    setTimeout(poll, ms);
+  }
+
+  async function sendMessage(rawText) {
+    const text = rawText.trim();
+    if (!text || state.sending) return;
+    if (text.length > CONFIG.maxInputChars) {
+      showNotice(`A mensagem excede ${CONFIG.maxInputChars} caracteres.`, 'error');
+      return;
+    }
+    state.sending = true;
+    $('btnSend').disabled = true;
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Erro ${res.status}`);
+      $('input').value = '';
+      autoGrow();
+      renderMessage(data);
+      if (data.id > state.lastId) state.lastId = data.id;
+    } catch (err) {
+      showNotice('Não foi possível enviar: ' + (err.message || 'erro desconhecido.'), 'error');
+      $('input').value = text;
+      autoGrow();
+    } finally {
+      state.sending = false;
+      $('btnSend').disabled = false;
+      $('input').focus();
+    }
+  }
+
+  function autoGrow() {
+    const field = $('input');
+    field.style.height = 'auto';
+    field.style.height = Math.min(field.scrollHeight, 200) + 'px';
+  }
+
+  function bind() {
+    $('composer').addEventListener('submit', (event) => {
+      event.preventDefault();
+      sendMessage($('input').value);
+    });
+    $('input').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        $('composer').requestSubmit();
+      }
+    });
+    $('input').addEventListener('input', autoGrow);
+    $('input').focus();
+    poll();
+  }
+
+  bind();
+})();
+</script>
+</body>
+</html>
